@@ -168,4 +168,6 @@ if test x$enable_linker_hardening != xno; then
     OTR_CHECK_LDFLAGS(-z relro -z now, "$all_ldflags_for_check", "$all_libs_for_check")
 fi
 
-AC_OUTPUT([Makefile src/Makefile toolkit/Makefile libotr.pc])
+AC_OUTPUT([Makefile src/Makefile toolkit/Makefile tests/Makefile tests/utils/Makefile libotr.pc
+           tests/utils/tap/Makefile
+])
