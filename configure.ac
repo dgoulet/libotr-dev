@@ -170,4 +170,5 @@ fi
 
 AC_OUTPUT([Makefile src/Makefile toolkit/Makefile tests/Makefile tests/utils/Makefile libotr.pc
            tests/utils/tap/Makefile
+           tests/unit/Makefile
 ])

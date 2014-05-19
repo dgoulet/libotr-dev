@@ -45,3 +45,5 @@ toolkit/otr_parse
 toolkit/otr_readforge
 toolkit/otr_remac
 toolkit/otr_sesskeys
+
+/tests/unit/test_auth
