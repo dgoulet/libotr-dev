@@ -21,6 +21,9 @@
 #ifndef __MESSAGE_H__
 #define __MESSAGE_H__
 
+#include "proto.h"
+#include "tlv.h"
+
 #define OTR_ERROR_PREFIX "?OTR Error: "
 
 typedef enum {
@@ -75,6 +78,8 @@ typedef enum {
     OTRL_CONVERT_SENDING,
     OTRL_CONVERT_RECEIVING
 } OtrlConvertType;
+
+typedef struct s_OtrlPrivkeyActionQueue OtrlPrivkeyActionQueue;
 
 typedef struct s_OtrlMessageAppOps {
     /* Return the OTR policy for the given context. */
@@ -435,5 +440,11 @@ unsigned int otrl_message_poll_get_default_interval(OtrlUserState us);
  * main libotr thread.*/
 void otrl_message_poll(OtrlUserState us, const OtrlMessageAppOps *ops,
 	void *opdata);
+
+/* Call all queued actions in a given OtrlUserState. */
+void otrl_message_action_empty_queue(OtrlUserState us);
+
+/* Forget all queued actions in a given OtrlUserState. */
+void otrl_message_forget_all(OtrlUserState us);
 
 #endif

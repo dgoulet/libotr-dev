@@ -25,6 +25,7 @@ typedef struct s_OtrlUserState* OtrlUserState;
 
 #include "instag.h"
 #include "context.h"
+#include "message.h"
 #include "privkey-t.h"
 
 struct s_OtrlUserState {
@@ -33,6 +34,7 @@ struct s_OtrlUserState {
     OtrlInsTag *instag_root;
     OtrlPendingPrivKey *pending_root;
     int timer_running;
+    OtrlPrivkeyActionQueue *privkey_action_queue;
 };
 
 /* Create a new OtrlUserState.  Most clients will only need one of

@@ -42,6 +42,7 @@ OtrlUserState otrl_userstate_create(void)
     us->instag_root = NULL;
     us->pending_root = NULL;
     us->timer_running = 0;
+    us->privkey_action_queue = NULL;
     return us;
 }
 
@@ -53,5 +54,6 @@ void otrl_userstate_free(OtrlUserState us)
     otrl_privkey_forget_all(us);
     otrl_privkey_pending_forget_all(us);
     otrl_instag_forget_all(us);
+    otrl_message_forget_all(us);
     free(us);
 }

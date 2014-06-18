@@ -21,10 +21,6 @@
 #ifndef __PROTO_H__
 #define __PROTO_H__
 
-#include "context.h"
-#include "version.h"
-#include "tlv.h"
-
 /* If we ever see this sequence in a plaintext message, we'll assume the
  * other side speaks OTR, and try to establish a connection. */
 #define OTRL_MESSAGE_TAG_BASE " \t  \t\t\t\t \t \t \t  "
@@ -99,6 +95,10 @@ typedef enum {
     OTRL_FRAGMENT_SEND_ALL_BUT_FIRST,
     OTRL_FRAGMENT_SEND_ALL_BUT_LAST
 } OtrlFragmentPolicy;
+
+#include "context.h"
+#include "version.h"
+#include "tlv.h"
 
 /* Initialize the OTR library.  Pass the version of the API you are
  * using. */

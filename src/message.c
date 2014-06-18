@@ -65,6 +65,174 @@ extern unsigned int otrl_api_version;
  * keys (and wipe them) (in seconds)? */
 #define POLL_DEFAULT_INTERVAL 70
 
+typedef enum
+{
+    OTRL_PRIVKEY_ACTION_AUTH_START,
+    OTRL_PRIVKEY_ACTION_HANDLE_KEY,
+    OTRL_PRIVKEY_ACTION_HANDLE_REVEALSIG,
+    OTRL_PRIVKEY_ACTION_HANDLE_KEYEXCH
+} OtrlPrivkeyActionType;
+
+typedef struct {
+    int gone_encrypted;
+    OtrlUserState us;
+    const OtrlMessageAppOps *ops;
+    void *opdata;
+    ConnContext *context;
+    int ignore_message;
+    char **messagep;
+} EncrData;
+
+struct s_OtrlPrivkeyActionQueue
+{
+    OtrlPrivkeyActionQueue *prev;
+    OtrlPrivkeyActionQueue *next;
+    OtrlPrivkeyActionType type;
+    char *ctx_username;
+    char *ctx_accountname;
+    char *ctx_protocol;
+    otrl_instag_t ctx_their_instance;
+    const OtrlMessageAppOps *ops;
+    void *opdata; /* XXX: is it guaranteed to remain between calls? */
+    char *action_data;
+};
+
+static void otrl_message_action_free(OtrlPrivkeyActionQueue *q)
+{
+    if (q == NULL)
+	return;
+
+    free(q->ctx_username);
+    free(q->ctx_accountname);
+    free(q->ctx_protocol);
+    free(q->action_data);
+    free(q);
+}
+
+static void otrl_message_action_enqueue(OtrlUserState us,
+    ConnContext *context, const OtrlMessageAppOps *ops, void *opdata,
+    OtrlPrivkeyActionType type, const char *action_data)
+{
+    OtrlPrivkeyActionQueue *q;
+
+    q = malloc(sizeof(OtrlPrivkeyActionQueue));
+    if (q == NULL)
+	return;
+
+    memset(q, 0, sizeof(OtrlPrivkeyActionQueue));
+    q->type = type;
+
+    q->ctx_username = strdup(context->username);
+    q->ctx_accountname = strdup(context->accountname);
+    q->ctx_protocol = strdup(context->protocol);
+    q->ctx_their_instance = context->their_instance;
+    q->action_data = strdup(action_data);
+
+    q->ops = ops;
+    q->opdata = opdata;
+
+    if (!q->ctx_username || !q->ctx_accountname || !q->ctx_protocol ||
+	!q->action_data)
+    {
+	otrl_message_action_free(q);
+	return;
+    }
+
+    q->prev = us->privkey_action_queue;
+    if (us->privkey_action_queue != NULL)
+	us->privkey_action_queue->next = q;
+    us->privkey_action_queue = q;
+}
+
+static gcry_error_t send_or_error_auth(const OtrlMessageAppOps *ops,
+	void *opdata, gcry_error_t err, ConnContext *context,
+	OtrlUserState us);
+static gcry_error_t go_encrypted(const OtrlAuthInfo *auth, void *asdata);
+static void maybe_resend(EncrData *edata);
+
+void otrl_message_action_empty_queue(OtrlUserState us)
+{
+    OtrlPrivkeyActionQueue *q, *it;
+
+    q = us->privkey_action_queue;
+    us->privkey_action_queue = NULL;
+    while (q && q->prev)
+	q = q->prev;
+
+    it = q;
+    while (it) {
+	ConnContext *context;
+	DH_keypair *our_dh = NULL;
+	unsigned int our_keyid = 0;
+	OtrlPrivKey *privkey;
+	gcry_error_t err;
+	int haveauthmsg;
+	EncrData edata;
+	char *newmessage = NULL;
+
+	q = it;
+	it = it->next;
+
+	context = otrl_context_find(us, q->ctx_username, q->ctx_accountname,
+	    q->ctx_protocol, q->ctx_their_instance, 0, NULL, NULL, NULL);
+	if (!context) {
+	    otrl_message_action_free(q);
+	    continue;
+	}
+
+	privkey = otrl_privkey_find(us, q->ctx_accountname, q->ctx_protocol);
+	if (!privkey) {
+	    otrl_message_action_free(q);
+	    continue;
+	}
+
+	if (context->msgstate == OTRL_MSGSTATE_ENCRYPTED) {
+	    our_dh = &(context->context_priv->our_old_dh_key);
+	    our_keyid = context->context_priv->our_keyid - 1;
+	}
+
+	edata.gone_encrypted = 0;
+	edata.us = us;
+	edata.context = context;
+	edata.ops = q->ops;
+	edata.opdata = q->opdata;
+	edata.ignore_message = -1;
+	edata.messagep = &newmessage;
+
+	if (q->type == OTRL_PRIVKEY_ACTION_AUTH_START) {
+	    err = otrl_auth_start_v1(&(context->auth), our_dh, our_keyid, privkey);
+	    send_or_error_auth(q->ops, q->opdata, err, context, us);
+	} else if (q->type == OTRL_PRIVKEY_ACTION_HANDLE_KEY) {
+	    err = otrl_auth_handle_key(&(context->auth),
+		q->action_data, &haveauthmsg, privkey);
+	    if (err || haveauthmsg) {
+		send_or_error_auth(q->ops, q->opdata, err, context, us);
+	    }
+	} else if (q->type == OTRL_PRIVKEY_ACTION_HANDLE_REVEALSIG) {
+	    err = otrl_auth_handle_revealsig(&(context->auth),
+		q->action_data, &haveauthmsg, privkey, go_encrypted, &edata);
+	    if (err || haveauthmsg) {
+		send_or_error_auth(q->ops, q->opdata, err, context, us);
+		maybe_resend(&edata);
+	    }
+	} else if (q->type == OTRL_PRIVKEY_ACTION_HANDLE_KEYEXCH) {
+	    err = otrl_auth_handle_v1_key_exchange(&(context->auth),
+		q->action_data, &haveauthmsg, privkey, our_dh, our_keyid,
+		go_encrypted, &edata);
+	    if (err || haveauthmsg) {
+		send_or_error_auth(q->ops, q->opdata, err, context, us);
+		maybe_resend(&edata);
+	    }
+	}
+	/* XXX: should we just drop such "new message"?
+	 * otrl_message_receiving context is lost at this point.
+	 * Maybe it depends on edata.ignore_message? */
+	free(newmessage);
+
+	otrl_message_action_free(q);
+    }
+}
+
 /* Send a message to the network, fragmenting first if necessary.
  * All messages to be sent to the network should go through this
  * method immediately before they are sent, ie after encryption. */
@@ -494,16 +662,6 @@ static gcry_error_t send_or_error_auth(const OtrlMessageAppOps *ops,
     }
     return err;
 }
-
-typedef struct {
-    int gone_encrypted;
-    OtrlUserState us;
-    const OtrlMessageAppOps *ops;
-    void *opdata;
-    ConnContext *context;
-    int ignore_message;
-    char **messagep;
-} EncrData;
 
 static gcry_error_t go_encrypted(const OtrlAuthInfo *auth, void *asdata)
 {
@@ -1166,8 +1324,10 @@ int otrl_message_receiving(OtrlUserState us, const OtrlMessageAppOps *ops,
 			if (ops->create_privkey) {
 			    ops->create_privkey(opdata, context->accountname,
 				    context->protocol);
-			    privkey = otrl_privkey_find(us,
-				    context->accountname, context->protocol);
+			    otrl_message_action_enqueue(us, context, ops, opdata,
+				OTRL_PRIVKEY_ACTION_AUTH_START, NULL);
+			    edata.ignore_message = 1;
+			    break;
 			}
 		    }
 		    if (privkey) {
@@ -1200,8 +1360,10 @@ int otrl_message_receiving(OtrlUserState us, const OtrlMessageAppOps *ops,
 		if (ops->create_privkey) {
 		    ops->create_privkey(opdata, context->accountname,
 			    context->protocol);
-		    privkey = otrl_privkey_find(us,
-			    context->accountname, context->protocol);
+		    otrl_message_action_enqueue(us, context, ops, opdata,
+			OTRL_PRIVKEY_ACTION_HANDLE_KEY, otrtag);
+		    edata.ignore_message = 1;
+		    break;
 		}
 	    }
 	    if (privkey) {
@@ -1224,8 +1386,10 @@ int otrl_message_receiving(OtrlUserState us, const OtrlMessageAppOps *ops,
 		if (ops->create_privkey) {
 		    ops->create_privkey(opdata, context->accountname,
 			    context->protocol);
-		    privkey = otrl_privkey_find(us,
-			    context->accountname, context->protocol);
+		    otrl_message_action_enqueue(us, context, ops, opdata,
+			OTRL_PRIVKEY_ACTION_HANDLE_REVEALSIG, otrtag);
+		    edata.ignore_message = 1;
+		    break;
 		}
 	    }
 	    if (privkey) {
@@ -1271,8 +1435,10 @@ int otrl_message_receiving(OtrlUserState us, const OtrlMessageAppOps *ops,
 		if (ops->create_privkey) {
 		    ops->create_privkey(opdata, context->accountname,
 			    context->protocol);
-		    privkey = otrl_privkey_find(us, context->accountname,
-			    context->protocol);
+		    otrl_message_action_enqueue(us, context, ops, opdata,
+			OTRL_PRIVKEY_ACTION_HANDLE_KEYEXCH, message);
+		    edata.ignore_message = 1;
+		    break;
 		}
 	    }
 	    if (privkey) {
@@ -1816,9 +1982,13 @@ int otrl_message_receiving(OtrlUserState us, const OtrlMessageAppOps *ops,
 				ops->create_privkey(opdata,
 					context->accountname,
 					context->protocol);
-				privkey = otrl_privkey_find(us,
-					context->accountname,
-					context->protocol);
+				/* XXX: should we force [our_dh=NULL, our_keyid=0],
+				 * or just obtain it in otrl_message_action_empty_queue,
+				 * from context->context_priv->our_xyz? */
+				otrl_message_action_enqueue(us, context, ops, opdata,
+				    OTRL_PRIVKEY_ACTION_AUTH_START, NULL);
+				edata.ignore_message = 1;
+				break;
 			    }
 			}
 			if (privkey) {
@@ -2043,3 +2213,14 @@ void otrl_message_poll(OtrlUserState us, const OtrlMessageAppOps *ops,
 	us->timer_running = 0;
     }
 }
+
+void otrl_message_forget_all(OtrlUserState us)
+{
+    while (us->privkey_action_queue) {
+	OtrlPrivkeyActionQueue *q = us->privkey_action_queue;
+	us->privkey_action_queue = q->prev;
+	otrl_message_action_free(q);
+    }
+}
+
+/* vim: set tabstop=8 softtabstop=4 shiftwidth=4 noexpandtab: */

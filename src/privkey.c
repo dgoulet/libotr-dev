@@ -617,6 +617,8 @@ gcry_error_t otrl_privkey_generate_finish_FILEp(OtrlUserState us,
 
     otrl_privkey_generate_cancelled(us, newkey);
 
+    otrl_message_action_empty_queue(us);
+
     return ret;
 }
 
@@ -936,3 +938,4 @@ gcry_error_t otrl_privkey_verify(const unsigned char *sigbuf, size_t siglen,
     return err;
 }
 
+/* vim: set tabstop=8 softtabstop=4 shiftwidth=4 noexpandtab: */
