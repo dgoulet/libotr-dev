@@ -1502,7 +1502,7 @@ int otrl_message_receiving(OtrlUserState us, const OtrlMessageAppOps *ops,
 			    unsigned char* nextmsg;
 			    int nextmsglen;
 			    OtrlTLV *sendtlv;
-			    char *sendsmp;
+			    char *sendsmp = NULL;
 			    otrl_sm_step3(context->smstate, tlv->data,
 				    tlv->len, &nextmsg, &nextmsglen);
 
@@ -1557,7 +1557,7 @@ int otrl_message_receiving(OtrlUserState us, const OtrlMessageAppOps *ops,
 			    unsigned char* nextmsg;
 			    int nextmsglen;
 			    OtrlTLV *sendtlv;
-			    char *sendsmp;
+			    char *sendsmp = NULL;
 			    err = otrl_sm_step4(context->smstate, tlv->data,
 				    tlv->len, &nextmsg, &nextmsglen);
 			    /* Set trust level based on result */
