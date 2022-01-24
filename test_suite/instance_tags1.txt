@@ -1,3 +1,0 @@
-otrtest1	prpl-aim	27e32500
-otrtest2	prpl-aim	27e32501
-otrtest3	prpl-aim	27e32502
